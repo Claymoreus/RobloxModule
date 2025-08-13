@@ -1,0 +1,2045 @@
+---[ META SERVICE ]---
+local MetaService = require(game:GetService('ServerScriptService'):WaitForChild('MetaService'))
+local BadgeService = game:GetService("BadgeService")
+
+---[ MODULES ]---
+local DataTemplate = require(MetaService.GameServices.ServerScriptService.Data.Manager.Template)
+local DataStorage = require(MetaService.GameServices.ServerScriptService.Data.Storage)
+local QuestsModule = require(script:WaitForChild('Quests'))
+local Configuration = require(MetaService.GameServices.ReplicatedStorage.Configuration)
+
+
+---[ SCRIPT ]---
+local Template = {}
+Template.__index = Template
+
+---[ Create ]---
+local function WaitingForData(PlayerInstance : Player)
+	local PlayerData
+	
+	local StartTime = os.time()
+	local Timeout = 300
+	
+	while not PlayerData do
+		PlayerData = DataStorage[PlayerInstance]
+		MetaService.GameServices.RunService.Heartbeat:Wait()
+		
+		if (os.time() - StartTime) >= Timeout then
+			break
+		end
+	end
+	
+	return PlayerData
+end
+
+function Template.new(Player : Player)
+	local newTemplate = {}
+	setmetatable(newTemplate, Template)
+	
+	newTemplate.Instance = Player
+	newTemplate.Profile = WaitingForData(Player)
+	if not newTemplate.Profile then Player:Kick('[META SERVICE] We couldn\'t load your data, please let us know') return end
+	
+	newTemplate.Data = newTemplate.Profile.Data
+	newTemplate.Cache = {
+		Drops = {},
+		Cooldown = {},
+		Critical = 0,
+	}
+	newTemplate.SessionTime = 0
+	local serverTime = workspace:GetServerTimeNow()
+	if serverTime then
+		if newTemplate.Data.joinedAtSeconds ~= nil then
+			newTemplate.Data.joinedAtSeconds = serverTime // 1
+		end
+	else
+		warn("Failed to get server time for player join")
+	end
+	--warn(newTemplate.Data)
+
+	newTemplate.Tags = {}
+	newTemplate.ClientLoaded = false
+
+	if MetaService.Settings.Classes.Player.Leaderstats.Enabled then
+		newTemplate.Leaderstats = Instance.new("Folder")
+		newTemplate.Leaderstats.Name = "leaderstats"
+		newTemplate.Leaderstats.Parent = newTemplate.Instance
+		
+		local leaderstatsStatTemplates = script:WaitForChild('leaderstats')
+		local evolution = leaderstatsStatTemplates:FindFirstChild("Evolution")
+		if evolution ~= nil then
+			local newVal = evolution:Clone()
+			newVal.Parent = newTemplate.Leaderstats
+		end
+		local statsChildren = leaderstatsStatTemplates:GetChildren()
+		for i = 1, #statsChildren do
+			if statsChildren[i].Name ~= "Evolution" then
+				local newVal = statsChildren[i]:Clone()
+				newVal.Parent = newTemplate.Leaderstats
+			end
+		end
+		
+		--newTemplate.Leaderstats = script:WaitForChild('leaderstats'):Clone()
+		--newTemplate.Leaderstats.Parent = newTemplate.Instance
+	end
+	
+	local joinData = Player:GetJoinData()
+	local teleportData = joinData.TeleportData
+
+	if teleportData and teleportData.Position then
+		--warn("Player returned AFK ")
+		-- Восстанавливаем позицию игрока
+		local newPosition = Vector3.new(
+			teleportData.Position.X,
+			teleportData.Position.Y,
+			teleportData.Position.Z
+		)
+
+		local afkPos = Instance.new("Vector3Value")
+		afkPos.Name = "AFKPos"
+		afkPos.Value = newPosition
+		afkPos.Parent = Player
+		
+		if teleportData.EggOpen then
+			if teleportData.EggOpen == true then
+				local eggAfk = Instance.new("BoolValue")
+				eggAfk.Name = "EggAfk"
+				eggAfk.Value = true
+				eggAfk.Parent = Player
+			end
+		end
+	end
+	
+
+	newTemplate.Tags = script:WaitForChild('Tags'):Clone()
+	newTemplate.Tags.Parent = newTemplate.Instance
+	
+	newTemplate.CharacterAdded = {}
+	newTemplate.CharacterRemoving = {}
+	newTemplate.Cache.CharacterAddedFunctions = {}
+	newTemplate.Cache.CharacterRemovingFunctions = {}
+	
+	newTemplate.Data.AutoDelete = {
+		['E'] = newTemplate.Data.AutoDelete['E'],
+		['D'] = newTemplate.Data.AutoDelete['D'],
+		['C'] = newTemplate.Data.AutoDelete['C'],
+		['B'] = newTemplate.Data.AutoDelete['B'],
+		['A'] = newTemplate.Data.AutoDelete['A'],
+		['S'] = newTemplate.Data.AutoDelete['S'],
+		['SS'] = newTemplate.Data.AutoDelete['SS'],
+		['SSS'] = newTemplate.Data.AutoDelete['SSS'],
+	}
+	
+	newTemplate.Data.AutoDeleteStars = {
+		['E'] = {newTemplate.Data.AutoDeleteStars['E'][1],newTemplate.Data.AutoDeleteStars['E'][2], newTemplate.Data.AutoDeleteStars['E'][3]},
+		['D'] = {newTemplate.Data.AutoDeleteStars['D'][1],newTemplate.Data.AutoDeleteStars['D'][2], newTemplate.Data.AutoDeleteStars['D'][3]},
+		['C'] = {newTemplate.Data.AutoDeleteStars['C'][1],newTemplate.Data.AutoDeleteStars['C'][2], newTemplate.Data.AutoDeleteStars['C'][3]},
+		['B'] = {newTemplate.Data.AutoDeleteStars['B'][1],newTemplate.Data.AutoDeleteStars['B'][2], newTemplate.Data.AutoDeleteStars['B'][3]},
+		['A'] = {newTemplate.Data.AutoDeleteStars['A'][1],newTemplate.Data.AutoDeleteStars['A'][2], newTemplate.Data.AutoDeleteStars['A'][3]},
+		['S'] = {newTemplate.Data.AutoDeleteStars['S'][1],newTemplate.Data.AutoDeleteStars['S'][2], newTemplate.Data.AutoDeleteStars['S'][3]},
+		['SS'] = {newTemplate.Data.AutoDeleteStars['SS'][1],newTemplate.Data.AutoDeleteStars['SS'][2], newTemplate.Data.AutoDeleteStars['SS'][3]},
+		['SSS'] = {newTemplate.Data.AutoDeleteStars['SSS'][1],newTemplate.Data.AutoDeleteStars['SSS'][2], newTemplate.Data.AutoDeleteStars['SSS'][3]},
+	}
+	
+	
+	for ID, PetTable in next, newTemplate.Data.Pets_s1 do
+		if type(PetTable.Name) ~= 'string' then
+			newTemplate.Data.Pets_s1[ID] = nil
+		end
+	end
+	
+	for ItemName : string, Amount in next, newTemplate.Data.Inventory.Items do
+		if Amount > 25000 then
+			newTemplate.Data.Inventory.Items[ItemName] = 25000
+		end
+	end
+	
+	if newTemplate.Data.Settings['Hide Aura'] ~= nil then
+		newTemplate.Data.Settings['Hide Aura'] = nil
+	end
+	
+	newTemplate:LoadSkills()
+	
+	task.spawn(function()
+		--newTemplate:CheckFriendsCount(Player)
+		pcall(function()
+			local GamepassesModule = require(game:GetService('ServerScriptService').MetaService.Server.Marketplace.Gamepasses)
+			
+			for GamepassId, GamepassTable in next, GamepassesModule do
+				if MetaService.GameServices.MarketplaceService:UserOwnsGamePassAsync(Player.UserId, GamepassId) then
+					newTemplate.Data.Gamepasses[GamepassTable.Name] = true
+				end
+			end
+			
+			if Player:GetRankInGroup(Configuration.GROUP_ID) == 3 then
+				Player:SetAttribute('Youtuber', true)
+				
+				newTemplate:LoadHUD()
+			elseif Player:GetRankInGroup(Configuration.GROUP_ID) >= 253 then
+				Player:SetAttribute('Creator', true)
+
+				newTemplate:LoadHUD()
+			elseif Player:GetRankInGroup(Configuration.GROUP_ID) == 252 then
+				Player:SetAttribute('Head Dev', true)
+
+				newTemplate:LoadHUD()
+			end
+		end)
+		
+		newTemplate:LoadHUD()
+		--warn("Current favorite show = " .. tostring(newTemplate.Data['Favorite']))
+		if newTemplate.Data['Favorite'] < 6 then
+			task.spawn(function()
+				pcall(function()
+					if newTemplate.Data['Favorite'] == 0 then
+						task.wait(12)
+						local PetInfo = MetaService.SharedModules.Pets["Hweng"]
+						local EggsTable = {}
+						table.insert(EggsTable, PetInfo)
+						newTemplate:AddPet("Hweng", PetInfo.Status, true)
+						newTemplate:Client('Stars', 'StarOpen', EggsTable)
+					end
+				end)
+				
+				task.wait(170)
+				newTemplate:Client('Favorite', 'ShowFavorite')
+				if newTemplate.Data['Favorite'] <= 3 then
+					newTemplate.Data['Favorite'] = 4
+				else
+					newTemplate.Data['Favorite'] +=1
+				end
+			end)
+		end
+		
+		if newTemplate.Data['Notify'] < 2 then
+			task.delay(200, function()
+				newTemplate.Data['Notify'] +=1
+				newTemplate:Client('GameUpdatesNotify', 'Notify')
+			end)
+		end
+		--newTemplate:CalculateAFKIncome()
+		newTemplate:AddBadge(Configuration.NEW_PLAYER_BAGE)
+
+	end)
+	
+	function newTemplate.CharacterAdded:Connect(Function)
+		if not Function or type(Function) ~= 'function' then error('Invalid Argument: ' .. type(Function)) return nil end
+		
+		local CreateCharacterFunction = {}
+		CreateCharacterFunction.ID = MetaService.GameServices.HttpService:GenerateGUID(false)
+		CreateCharacterFunction.Function = Function
+		
+		function CreateCharacterFunction:Disconnect()
+			if newTemplate.Cache.CharacterAddedFunctions[CreateCharacterFunction.ID] then
+				newTemplate.Cache.CharacterAddedFunctions[CreateCharacterFunction.ID] = nil
+			else
+				error('Can\'t Disconnect nil value')
+			end
+		end
+		
+		newTemplate.Cache.CharacterAddedFunctions[CreateCharacterFunction.ID] = CreateCharacterFunction
+		
+		return CreateCharacterFunction
+	end
+	
+	function newTemplate.CharacterRemoving:Connect(Function)
+		if not Function or type(Function) ~= 'function' then error('Invalid Argument: ' .. type(Function)) return nil end
+
+		local CreateCharacterFunction = {}
+		CreateCharacterFunction.ID = MetaService.GameServices.HttpService:GenerateGUID(false)
+		CreateCharacterFunction.Function = Function
+
+		function CreateCharacterFunction:Disconnect()
+			if newTemplate.Cache.CharacterRemovingFunctions[CreateCharacterFunction.ID] then
+				newTemplate.Cache.CharacterRemovingFunctions[CreateCharacterFunction.ID] = nil
+			else
+				error('Can\'t Disconnect nil value')
+			end
+		end
+
+		newTemplate.Cache.CharacterRemovingFunctions[CreateCharacterFunction.ID] = CreateCharacterFunction
+
+		return CreateCharacterFunction
+	end
+	
+	newTemplate.Instance.CharacterAdded:Connect(function()
+		local Timeout = 10
+		local StartTime = tick()
+		
+		local Character = newTemplate:GetCharacter()
+		
+		if not Character then
+			repeat
+				Character = newTemplate:GetCharacter()
+				
+				task.wait(0.1)
+			until Character ~= nil or (tick() - StartTime) > Timeout
+		end
+		
+		if not Character then warn('[Meta Service] Error to load character: ' .. newTemplate.Instance.Name) return end
+		
+		for _, CharacterTable in next, newTemplate.Cache.CharacterAddedFunctions do
+			if CharacterTable.Function then
+				task.spawn(function()
+					CharacterTable.Function(Character)
+				end)
+			end
+		end
+	end)
+	
+	newTemplate.Instance.CharacterRemoving:Connect(function()
+		for _, CharacterTable in next, newTemplate.Cache.CharacterRemovingFunctions do
+			if CharacterTable.Function then
+				task.spawn(function()
+					CharacterTable.Function()
+				end)
+			end
+		end
+	end)
+	
+	return newTemplate
+end
+
+---[ FUNCTIONS ]---
+function Template:Client(...)
+	if not self.ClientLoaded then return end
+	
+	MetaService.GameServices.ReplicatedStorage.Bridge:FireClient(self.Instance, ...)
+end
+
+function Template:Notification(...)
+	self:Client('Notification', 'Create', ...)
+end
+
+function Template:NotificationGlobal(...)
+	self:Client('Notification', 'CreateCenter', ...)
+end
+
+function Template:Reward(...)
+	self:Client('Rewards', 'Add', ...)
+end
+
+function Template:CalculateAFKIncome()
+	if not self.Data.AFKStartTime then
+		warn("AFKStartTime not set for player: " .. self.Instance.UserId)
+		return 0
+	end
+
+	local currentTime = os.clock() -- Текущее серверное время в секундах
+	local afkTimeSeconds = currentTime - self.Data.AFKStartTime
+	local afkTimeMinutes = math.floor(afkTimeSeconds / 60) -- Конвертация в минуты
+	local maxAFKMinutes = 8 * 60 -- Максимум 8 часов (480 минут)
+
+	-- Ограничение времени AFK до 8 часов
+	afkTimeMinutes = math.clamp(afkTimeMinutes, 0, maxAFKMinutes)
+
+	-- Вычисление награды: 10 монет за минуту
+	local coinsEarned = afkTimeMinutes * 10
+	
+	local damageInSec = self:GetDamage()
+	local hitInSec = 1
+	if self.Data.Gamepasses['Fast Click'] then
+		damageInSec = damageInSec * 4
+		hitInSec = hitInSec * 4
+	else
+		damageInSec = damageInSec * 2
+		hitInSec = hitInSec * 2
+	end
+	local MapName = "Sacred Forest"
+	if self.Data.Rank_s1 < 5 then
+		MapName = "Sacred Forest"
+	elseif	self.Data.Rank_s1 < 10 then
+		MapName = "Sands"
+	elseif	self.Data.Rank_s1 < 15 then
+		MapName = "Subway"
+	elseif	self.Data.Rank_s1 < 20 then
+		MapName = "Anthill"
+	else
+		MapName = "Fiery World"
+	end
+
+	local MapInfo = MetaService.SharedModules.Maps[MapName]
+	if not MapInfo then return end
+	local TotalDamage = damageInSec * 12 * afkTimeMinutes -- Get 20% income on AFK
+	local GemsAmount = math.floor(math.clamp((TotalDamage * (MapInfo.Yen or 0.001)), 1, math.huge))
+	local TotalClick = hitInSec * 12 * afkTimeMinutes
+	self:AddGems(GemsAmount)
+	self:AddEnergy(TotalClick)
+	-- Добавление монет к балансу игрока
+	--self.Data.Gems += GemsAmount
+
+	-- Сброс AFKStartTime после начисления награды
+	self.Data.AFKStartTime = nil
+	self:Client('Drops', 'PopUp', MetaService.SharedModules.Items['Souls'].Icon, MetaService.Utils:Format(GemsAmount))
+	warn(string.format("Player %s earned " .. tostring(MetaService.Utils:Format(GemsAmount))  .." coins for %d minutes AFK", self.Instance.UserId,  afkTimeMinutes))
+	warn(string.format("Player %s earned %d clickis for %d minutes AFK", self.Instance.UserId, TotalClick, afkTimeMinutes))
+end
+
+function Template.SetAFKStartTime(Player : Player)
+	Player.Data.AFKStartTime = os.clock()
+	warn("Set AFKStartTime to " .. os.clock() .. " for player: " .. Player.Instance.UserId)
+end
+
+function Template:GetEvolutionLevel(totalGems)
+	--local totalGems = MetaService.Utils.Player.Data.TotalStats['Total Gems']
+	--local totalGems = MetaService.Data.TotalStats['Total Gems']
+	
+	for level = #MetaService.SharedModules.EvolutionLevels_s1, 1, -1 do
+		local CurrentInfo = MetaService.SharedModules.EvolutionLevels_s1[level]
+		local GetPrice = MetaService.Utils:Unformat(CurrentInfo)
+		--warn(tostring(totalGems) .. " // " .. tostring(GetPrice))
+		if totalGems >= GetPrice then
+			--warn(tostring(totalGems) .. " // " .. tostring(GetPrice))
+			return level
+		end
+	end
+	return 0  -- Минимальный уровень 1, так как gems >= 0
+end
+
+function Template:Refresh()
+	if MetaService.Settings.Classes.Player.Leaderstats.Refresh then
+		local leaderstats = self.Leaderstats
+		
+		if leaderstats then
+			for _, Value in next, leaderstats:GetChildren() do
+				if Value.Name == "Evolution" then
+
+					if not self.Data["Evolution"] then continue end
+					if type(self.Data["Evolution"]) == 'number' then
+						Value.Value = MetaService.Utils:Format(self.Data["Evolution"])
+					else
+						Value.Value = self.Data[Value.Name]
+					end
+				elseif Value.Name == "Tears" then
+					
+					if not self.Data["Gems_s1"] then continue end
+					if type(self.Data["Gems_s1"]) == 'number' then
+						Value.Value = MetaService.Utils:Format(self.Data["Gems_s1"])
+					else
+						Value.Value = self.Data[Value.Name]
+					end
+				elseif Value.Name == "D Power" then
+					if not self.Data["Energy_s1"] then continue end
+					if type(self.Data["Energy_s1"]) == 'number' then
+						Value.Value = MetaService.Utils:Format(self.Data["Energy_s1"])
+					else
+						Value.Value = self.Data[Value.Name]
+					end
+				end
+				--if not self.Data[Value.Name] then continue end
+				
+				--if type(self.Data[Value.Name]) == 'number' then
+				--	warn(Value.Name)
+				--	Value.Value = MetaService.Utils:Format(self.Data[Value.Name])
+				--else
+				--	Value.Value = self.Data[Value.Name]
+				--end
+			end
+		end
+	end
+	
+	--local MiningAmount = math.clamp((self.Data.TotalStats['Time Played'] / 60 / 60), 0, math.huge)
+	--MiningAmount = math.ceil(MiningAmount)
+	
+	--self.Data.Mining.Level = 1 + MiningAmount
+	
+	if self.Data.Settings['Instant Spin'] and not self.Data.Gamepasses['Fast Open'] and self.Data.TotalStats['Time Played'] < 86400 then
+		self.Data.Settings['Instant Spin'] = false
+	end
+	
+	local MaxPets = self:GetPetsEquipCapacity()
+	local PetsEquipped = self:GetPetsEquipped()
+	if PetsEquipped > MaxPets then
+		self:UnequipAll()
+	end
+	
+	self:LoadSkills()
+	
+	self:Client('Server', 'Data', self.Data)
+end
+
+function Template:LoadSkills()
+	if (os.time() - self.Data.Skill.LastUpdate) < 3600 then return end
+	self.Data.Skill.LastUpdate = os.time()
+
+	local GetRarities = {
+		['Common'] = '',
+		['Rare'] = '',
+		['Epic'] = '',
+		['Legendary'] = '',
+		['Mythical'] = '',
+	}
+
+	for RarityName : string,_ in next, GetRarities do
+		local PossibleSkillsInRarity = {}
+
+		for SkillName : string, SkillInfo : {} in next, MetaService.SharedModules.Skills do
+			if SkillInfo.Rarity ~= RarityName then continue end
+
+			table.insert(PossibleSkillsInRarity, SkillName)
+		end
+
+		if #PossibleSkillsInRarity == 0 then return end
+		local GetRandomSkillInRarity = PossibleSkillsInRarity[math.random(1, #PossibleSkillsInRarity)]
+		GetRarities[RarityName] = GetRandomSkillInRarity
+	end
+
+	self.Data.Skill.List = GetRarities
+end
+
+--function Template:AddBadge(BadgeID)
+--	local sucess, BadgeInfo = pcall(function()
+--		return MetaService.GameServices.BadgeService:GetBadgeInfoAsync(BadgeID)
+--	end)
+
+--	if sucess and BadgeInfo.IsEnabled then
+--		if not MetaService.GameServices.BadgeService:UserHasBadgeAsync(self.Instance.UserId, BadgeID) then
+--			local BadgeSucess, Result = pcall(function()
+--				return MetaService.GameServices.BadgeService:AwardBadge(self.Instance.UserId, BadgeID)
+--			end)
+--		end
+--	end
+--end
+
+function Template:AddBadge(BadgeID)
+	local playerId = self.Instance.UserId
+
+	-- Проверяем, есть ли бейдж в данных игрока
+	if self.Data.Inventory.Badges[BadgeID] then
+		return -- Бейдж уже выдан
+	end
+
+	-- Проверяем, существует ли бейдж и включён ли он
+	local badgeSuccess, badgeInfo = pcall(function()
+		return BadgeService:GetBadgeInfoAsync(BadgeID)
+	end)
+
+	if badgeSuccess and badgeInfo.IsEnabled then
+		-- Проверяем, есть ли у игрока бейдж
+		local userHasBadgeSuccess, userHasBadge = pcall(function()
+			return BadgeService:UserHasBadgeAsync(playerId, BadgeID)
+		end)
+
+		if userHasBadgeSuccess and not userHasBadge then
+			-- Выдаём бейдж
+			local awardSuccess, result = pcall(function()
+				return BadgeService:AwardBadge(playerId, BadgeID)
+			end)
+			if awardSuccess and result then
+				-- Сохраняем в профиль игрока
+				self.Data.Inventory.Badges[BadgeID] = true
+				print(string.format("Awarded badge %d to player %s", BadgeID, self.Instance.Name))
+			end
+		elseif userHasBadgeSuccess and userHasBadge then
+			-- Если бейдж уже есть в Roblox, но отсутствует в данных, синхронизируем
+			self.Data.Inventory.Badges[BadgeID] = true
+		end
+	else
+		--warn("Cant find badge or badge disable! " .. tostring(BadgeID))
+	end
+end
+
+function Template:GetCharacter()
+	local Character = self.Instance.Character
+	if not Character or not Character:FindFirstChild('Humanoid') or not Character:FindFirstChild('HumanoidRootPart') or not Character:FindFirstChild('Debris') then return nil end
+	
+	return Character
+end
+
+--function Template:LoadSkills()
+--	if (os.time() - self.Data.Skill.LastUpdate) < 3600 then return end
+--	self.Data.Skill.LastUpdate = os.time()
+
+--	local GetRarities = {
+--		['Common'] = '',
+--		['Rare'] = '',
+--		['Epic'] = '',
+--		['Legendary'] = '',
+--		['Mythical'] = '',
+--	}
+
+--	for RarityName : string,_ in next, GetRarities do
+--		local PossibleSkillsInRarity = {}
+
+--		for SkillName : string, SkillInfo : {} in next, MetaService.SharedModules.Skills do
+--			if SkillInfo.Rarity ~= RarityName then continue end
+
+--			table.insert(PossibleSkillsInRarity, SkillName)
+--		end
+
+--		if #PossibleSkillsInRarity == 0 then return end
+--		local GetRandomSkillInRarity = PossibleSkillsInRarity[math.random(1, #PossibleSkillsInRarity)]
+--		GetRarities[RarityName] = GetRandomSkillInRarity
+--	end
+
+--	self.Data.Skill.List = GetRarities
+--end
+
+function Template:LoadHUD()
+	local Character = self:GetCharacter()
+	if not Character then return end
+	
+	if Character.HumanoidRootPart:FindFirstChild('HUD') then
+		Character.HumanoidRootPart:FindFirstChild('HUD'):Destroy()
+	end
+	
+	local HUD = script.HUD:Clone()
+	HUD.Frame.PlayerName.Text = self.Instance.Name
+	local rankText = ""
+	
+	if self.Data.Rank_s1 >= 22 then 
+		--warn(tostring(Character.Name))
+		if MetaService.SharedModules.Ranks[self.Data.Rank_s1] ~= nil then
+			rankText = MetaService.SharedModules.Ranks[self.Data.Rank_s1].ShortName
+		else
+			rankText = ""
+		end
+	else
+		--warn(tostring(Character.Name))
+		if MetaService.SharedModules.Ranks[self.Data.Rank_s1] ~= nil then
+			rankText = MetaService.SharedModules.Ranks[self.Data.Rank_s1].ShortName
+		else
+			rankText = ""
+		end
+	end
+	HUD.Frame.PlayerRank.Text = rankText
+	HUD.Frame.PlayerRank.TextColor3 = Color3.new(0.588235, 0.588235, 0.588235)
+	HUD.Frame.Verify.Visible = if self.Data.Verified then true else false
+	
+	if self.Instance:GetAttribute('Youtuber') then
+		HUD.Frame.Verify.Image = 'rbxassetid://5027762797'
+		HUD.Frame.Verify.Visible = true
+	elseif self.Instance:GetAttribute('Creator') then
+		HUD.Frame.Verify.Image = 'rbxassetid://89483051482973'
+		HUD.Frame.Verify.Visible = true
+	end
+	
+	if self.Data.Banned == true then
+		HUD.Frame.Verify.Image = 'rbxassetid://15975953960'
+		HUD.Frame.Verify.Visible = true
+	end
+	
+	--local TitleInfo = MetaService.SharedModules.Titles[self.Data.Title]
+	--if TitleInfo then
+	--	HUD.Frame.PlayerRank.Text = TitleInfo.Name
+	--	HUD.Frame.PlayerRank.TextColor3 = Color3.new(0, 1, 0.968627)
+	--end
+	
+	HUD.Parent = Character.HumanoidRootPart
+end
+
+
+function Template:LoadSword()
+	local Character : Model = self:GetCharacter()
+	if not Character or not Character:FindFirstChild('Right Arm') then return end
+
+	--if Character.Debris:FindFirstChild('Sword') then
+	--	Character.Debris:FindFirstChild('Sword'):Destroy()
+	--end
+
+	if Character['Right Arm']:FindFirstChild('Sword') then
+		Character['Right Arm']:FindFirstChild('Sword'):Destroy()
+	end
+
+	if self.Data.AvatarSettings['Hide Sword'] then return end
+
+	-- Добавляем проверку на специальный ивент (только мечи с ['Special'] = "Infinite Castle")
+	local Swords = MetaService.SharedModules.Swords  -- Предполагаем, что модуль доступен по этому пути; скорректируйте, если нужно
+	local swordData = Swords[self.Data.Sword]
+	if not swordData or swordData.Special ~= "Infinite Castle" then
+		self.Data.Sword = ""
+		return
+	end
+
+	local SwordModel = MetaService.GameServices.ReplicatedStorage.Swords:FindFirstChild(self.Data.Sword)
+	if not SwordModel then return end
+
+	SwordModel = SwordModel:Clone()
+	SwordModel.Name = 'Sword'
+	--SwordModel.Parent = Character.Debris
+	SwordModel.Parent = Character['Right Arm']
+	local Weld = Instance.new('Motor6D', SwordModel.Handle)
+
+	--	local Weld = Instance.new('Weld', SwordModel.Handle)
+	Weld.Part0 = Character['Right Arm']
+	Weld.Part1 = SwordModel.Handle
+	--Weld.C0 = CFrame.new(0,-0.7,0) * CFrame.Angles(math.rad(-90), 0, 0)
+	--Weld.C1 = CFrame.new(0,0,0) * CFrame.Angles(0, math.rad(90), 0)
+
+	Weld.C0 = CFrame.new(0,-0.7,0) * CFrame.Angles(0, math.rad(-90), math.rad(90))
+	Weld.C1 = CFrame.new(0,0,0) * CFrame.Angles(0, 0, 0)
+	if self.Data.Sword == 'Uzue Blade' or self.Data.Sword == 'Great Blade' or self.Data.Sword == 'Inesuko Blade' or self.Data.Sword == 'Mom Sword' then
+		Weld.C0 = CFrame.new(0,-0.5,-4) * CFrame.Angles(math.rad(-90), 0, 0)
+	end
+end
+
+function Template:LoadAura()
+	local Character : Model = self:GetCharacter()
+	if not Character then return end
+	
+	for _, Any : Instance in next, Character:GetDescendants() do
+		if not Any:GetAttribute('Aura_Effect') then continue end
+		
+		Any:Destroy()
+	end
+	
+	if self.Data.AvatarSettings['Hide Aura'] then return end
+	
+	local AuraFolder = MetaService.GameServices.ReplicatedStorage.Auras:FindFirstChild(self.Data.SoloAura_s1)
+	if not AuraFolder then return end
+	
+	for _, BodyPart in next, AuraFolder:GetChildren() do
+		if Character:FindFirstChild(BodyPart.Name) then
+			for _, Effect in next, BodyPart:GetChildren() do
+				local Cloned = Effect:Clone()
+				Cloned:SetAttribute('Aura_Effect', true)
+				
+				Cloned.Parent = Character:FindFirstChild(BodyPart.Name)
+			end
+		end
+	end
+end
+
+
+function Template:LoadAvatar(ActualName)
+	local character :Model = self:GetCharacter()
+	if not character or not character.HumanoidRootPart or not character:FindFirstChild("Humanoid") then return end
+	
+	--// Get Humanoid
+	local humanoid :Humanoid = character.Humanoid
+	--//
+	
+	--// Save Information about Character
+	local rootPart :BasePart = character.HumanoidRootPart
+	local savedCFrame :CFrame = rootPart.CFrame
+	local savedVelocity :Vector3 = rootPart.AssemblyLinearVelocity
+	local savedAngularVelocity :Vector3 = rootPart.AssemblyAngularVelocity
+	--//
+	
+	self:Client('Avatars', 'CameraFix')
+	
+	if (self.Data.Avatar == '' and character:GetAttribute("Avatar")) 
+		or (self.Data.AvatarSettings["Hide Avatar"])
+	then
+		if character:GetAttribute("Avatar") then
+			local humDescription :HumanoidDescription = script.Avatar.HumanoidDescription
+			
+			--// Try Get User Description from Roblox
+			pcall(function()
+				humDescription = game:GetService("Players"):GetHumanoidDescriptionFromUserId(self.Instance.UserId)
+			end)
+			--//
+			
+			--// Destroy Old Parts of Character
+			local shirt :Shirt = character:FindFirstChildOfClass("Shirt")
+			if shirt then shirt:Destroy() end
+			
+			local pants :Pants = character:FindFirstChildOfClass("Pants")
+			if pants then pants:Destroy() end
+			--//
+			
+			--// Destroy Old Accessories
+			for _, accessory :Accessory in ipairs(character:GetChildren()) do
+				if accessory:IsA("Accessory") then accessory:Destroy() end
+			end
+			--//
+			
+			humanoid:ApplyDescription(humDescription)
+		end
+		
+		return
+	end
+	
+	--// Avatar Check
+	local avatarInfo = MetaService.SharedModules.Avatars[self.Data.Avatar]
+	if not avatarInfo then 
+		avatarInfo = MetaService.SharedModules.Avatars_s1[self.Data.Avatar]
+		if not avatarInfo then return end
+	end
+	--//
+	
+	--// Find Avatar Model
+	local worldFolder :Folder = MetaService.GameServices.ReplicatedStorage.Pets:FindFirstChild(avatarInfo.World)
+	if not worldFolder then return end
+
+	local avatarModel :Model = if ActualName then worldFolder:FindFirstChild(ActualName)
+		else worldFolder:FindFirstChild(self.Data.Avatar)
+	
+	if not avatarModel then return end
+	--//
+	
+	--// Destroy Old Character
+	character:Destroy()
+	--//
+	
+	--// Create New Avatar
+	avatarModel = avatarModel:Clone()
+	avatarModel.Name = self.Instance.Name
+	
+	if not self.Data.AvatarSettings["Hide Avatar"] 
+		and self.Data.AvatarSettings["Hide Avatar Face"]
+		and avatarModel:FindFirstChild("Decor")
+	then
+		for _, child :MeshPart in ipairs(avatarModel.Decor:GetChildren()) do
+			if not (child.Name == "MeshFace" or child:IsA("BasePart") or child:IsA("MeshPart")) then continue end
+			child.Transparency = 1
+		end
+	end
+	
+	avatarModel.Humanoid.UseJumpPower = true
+	avatarModel.Humanoid.JumpPower = 50
+	
+	avatarModel.PrimaryPart.CFrame = savedCFrame
+	avatarModel:SetAttribute("Avatar", true)
+	
+	avatarModel.Parent = MetaService.GameServices.Workspace
+	self.Instance.Character = avatarModel
+	
+	avatarModel.PrimaryPart.AssemblyLinearVelocity = savedVelocity
+	avatarModel.PrimaryPart.AssemblyAngularVelocity = savedAngularVelocity
+	--//
+	
+	--// Clone User Scripts
+	for _, asset :LocalScript in ipairs(MetaService.GameServices.StarterPlayer.StarterCharacterScripts:GetChildren()) do
+		asset:Clone().Parent = avatarModel
+	end
+	--//
+	
+	--// Destroy Garbage
+	character = self:GetCharacter()
+	if not character or not character.HumanoidRootPart or not character:FindFirstChild("Decor") then return end
+	for _, part :BasePart in ipairs(character.Decor:GetChildren()) do
+		if part.Name == "weaponToDelete" then part:Destroy() end
+	end
+	--//
+end
+
+--function Template:LoadAvatar(ActualName)
+--	--warn("Load avatar=========================")
+--	local Character = self:GetCharacter()
+--	if not Character or not Character:FindFirstChild("HumanoidRootPart") or not Character:FindFirstChild("Humanoid") then 
+--		return 
+--	end
+
+--	-- Сохраняем текущее состояние (расширенное: CFrame, Velocity, Rotation)
+--	local RootPart = Character.HumanoidRootPart
+--	local CurrentCFrame = RootPart.CFrame
+--	local CurrentVelocity = RootPart.AssemblyLinearVelocity
+--	local CurrentAngularVelocity = RootPart.AssemblyAngularVelocity
+
+--	self:Client('Avatars', 'CameraFix')
+	
+--	-- Обработка скрытия аватара (просто отключаем видимость, без замены)
+--	if self.Data.Avatar == '' and Character:GetAttribute('Avatar') then
+--		self.Instance:LoadCharacter()  -- Если пустой, полный respawn (как в оригинале)
+--		return
+--	elseif self.Data.AvatarSettings['Hide Avatar'] then
+--		if Character:GetAttribute('Avatar') then
+--			self.Instance:LoadCharacter()
+--		end
+--		return
+--	end
+
+--	-- Получаем информацию об аватаре (из базового или s1)
+--	local AvatarInfo = MetaService.SharedModules.Avatars[self.Data.Avatar]
+--	if not AvatarInfo then 
+--		AvatarInfo = MetaService.SharedModules.Avatars_s1[self.Data.Avatar]
+--		if not AvatarInfo then 
+--			return
+--		end
+--	end
+
+--	local WorldFolder = MetaService.GameServices.ReplicatedStorage.Pets:FindFirstChild(AvatarInfo.World)
+--	if not WorldFolder then return end
+
+--	local AvatarModel = if ActualName then WorldFolder:FindFirstChild(ActualName) else WorldFolder:FindFirstChild(self.Data.Avatar)
+--	if not AvatarModel then return end
+
+--	-- Клонируем новую модель заранее (без Humanoid, чтобы избежать конфликтов)
+--	AvatarModel = AvatarModel:Clone()
+--	local OldHumanoid = Character.Humanoid
+--	local NewRootPart = AvatarModel:FindFirstChild("HumanoidRootPart")  -- Предполагаем, что в модели есть RootPart
+--	if not NewRootPart then return end
+
+--	-- Временно удаляем Humanoid из новой модели, если он есть (чтобы не убивать персонажа)
+--	local NewHumanoid = AvatarModel:FindFirstChildOfClass("Humanoid")
+--	if NewHumanoid then NewHumanoid:Destroy() end
+
+--	-- Настраиваем новую модель
+--	AvatarModel.Name = self.Instance.Name
+--	if not self.Data.AvatarSettings['Hide Avatar'] then
+--		if self.Data.AvatarSettings['Hide Avatar Face'] then
+--			local decorFolder = AvatarModel:FindFirstChild("Decor")
+--			if decorFolder then
+--				for _, child in ipairs(decorFolder:GetChildren()) do
+--					if child.Name == "MeshFace" and (child:IsA("BasePart") or child:IsA("MeshPart") or child:IsA("Part")) then
+--						child.Transparency = 1
+--					end
+--				end
+--			end
+--		end
+--	end
+
+--	-- Устанавливаем позицию заранее, перед parenting
+--	NewRootPart.CFrame = CurrentCFrame
+--	NewRootPart.AssemblyLinearVelocity = CurrentVelocity
+--	NewRootPart.AssemblyAngularVelocity = CurrentAngularVelocity
+
+--	-- Остановить анимации на старом Humanoid
+--	for _, track in ipairs(OldHumanoid:GetPlayingAnimationTracks()) do
+--		track:Stop(0)
+--	end
+
+--	-- Reparent: Перемещаем старый Humanoid в storage (вместо nil, чтобы избежать смерти)
+--	local tempStorage = Instance.new("Folder")
+--	tempStorage.Name = "TempHumanoidStorage"
+--	tempStorage.Parent = game.ServerStorage
+--	OldHumanoid.Parent = tempStorage
+--	OldHumanoid.Health = OldHumanoid.MaxHealth  -- Предотвращаем смерть
+--	OldHumanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)  -- Отключаем смерть
+
+--	-- Устанавливаем новую модель как Character
+--	self.Instance.Character = AvatarModel
+--	AvatarModel.Parent = MetaService.GameServices.Workspace
+
+--	-- Восстанавливаем Humanoid в новую модель
+--	OldHumanoid.Parent = AvatarModel
+--	OldHumanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, true)  -- Включаем обратно
+
+--	-- Синхронизируем и ждем фрейм
+--	game:GetService("RunService").Heartbeat:Wait()
+--	task.wait(0.4)
+
+--	-- Дополнительная проверка и коррекция позиции
+--	local function CheckAndCorrectPosition()
+--		local maxChecks = 10  -- Увеличили для большей надежности
+--		local checkCount = 0
+--		local RunService = game:GetService("RunService")
+
+--		while checkCount < maxChecks do 
+--			task.wait(0.05)
+--			checkCount += 1
+
+--			local currentPosition = NewRootPart.Position
+--			local targetPosition = CurrentCFrame.Position
+--			local distance = (currentPosition - targetPosition).Magnitude
+
+--			if distance > 30 then
+--				--warn("Avatar position correction applied: distance was " .. tostring(distance))
+--				NewRootPart.Anchored = true
+--				NewRootPart.CFrame = CurrentCFrame + Vector3.new(0, 2, 0)  -- Перемещение на +2 studs выше
+--				NewRootPart.AssemblyLinearVelocity = CurrentVelocity
+--				NewRootPart.AssemblyAngularVelocity = CurrentAngularVelocity
+--				RunService.Heartbeat:Wait()
+--				NewRootPart.Anchored = false
+--			else
+--				break
+--			end
+--		end
+--		tempStorage:Destroy()  -- Очистка
+--	end
+
+--	task.spawn(CheckAndCorrectPosition)
+--	--local function PositionDebug()
+--	--	local cycle = 0
+--	--	while cycle < 30 do
+--	--		print(NewRootPart.Position)
+--	--		task.wait(0.05)
+--	--		cycle += 1
+--	--	end
+--	--	-- Ждем один фрейм
+--	--end
+
+--	--task.spawn(PositionDebug)
+--	-- Копируем скрипты (как в оригинале, но только необходимые)
+--	for _, Asset in next, MetaService.GameServices.StarterPlayer.StarterCharacterScripts:GetChildren() do
+--		if not AvatarModel:FindFirstChild(Asset.Name) then  -- Избегаем дубликатов
+--			Asset:Clone().Parent = AvatarModel
+--		end
+--	end
+
+--	-- Дополнительная очистка (как в оригинале)
+--	local decor = AvatarModel:FindFirstChild("Decor")
+--	if decor then
+--		for _, child in ipairs(decor:GetChildren()) do
+--			if child.Name == "weaponToDelete" then
+--				child:Destroy()
+--			end
+--		end
+--	end
+	
+--	if Character and Character.Parent then
+--		Character:Destroy()
+--	end
+
+--	AvatarModel:SetAttribute('Avatar', true)
+--end
+
+--function Template:LoadAvatar(ActualName)
+--	local Character = self:GetCharacter()
+
+--	if not Character or not Character.HumanoidRootPart then return end
+--	-- Сохраняем текущую позицию и ориентацию персонажа
+--	local CurrentCFrame = Character.HumanoidRootPart.CFrame
+	
+--	self:Client('Avatars', 'CameraFix')
+	
+--	if self.Data.Avatar == '' and Character:GetAttribute('Avatar') then
+--		self.Instance:LoadCharacter()
+--		return
+--	elseif self.Data.AvatarSettings['Hide Avatar'] then
+--		if Character:GetAttribute('Avatar') then
+--			self.Instance:LoadCharacter()
+--		end
+--		return	
+--	end
+
+--	local AvatarInfo = MetaService.SharedModules.Avatars[self.Data.Avatar]
+--	if not AvatarInfo then 
+--		AvatarInfo = MetaService.SharedModules.Avatars_s1[self.Data.Avatar]
+--		if not AvatarInfo then 
+--			return 	
+--		end
+--	end
+
+--	local WorldFolder = MetaService.GameServices.ReplicatedStorage.Pets:FindFirstChild(AvatarInfo.World)
+--	if not WorldFolder then return end
+
+--	local AvatarModel = if ActualName then WorldFolder:FindFirstChild(ActualName) else WorldFolder:FindFirstChild(self.Data.Avatar)
+--	if not AvatarModel then return end
+
+--	-- Уничтожаем старый персонаж
+--	Character:Destroy()
+
+--	-- Клонируем и настраиваем новый аватар
+--	AvatarModel = AvatarModel:Clone()
+--	AvatarModel.Name = self.Instance.Name
+--	if not self.Data.AvatarSettings['Hide Avatar'] then
+--		if self.Data.AvatarSettings['Hide Avatar Face'] then
+--			local decorFolder = AvatarModel:FindFirstChild("Decor")
+--			if decorFolder ~= nil then
+--				for _, child in ipairs(decorFolder:GetChildren()) do
+--					if child.Name == "MeshFace" then 
+--						if child:IsA("BasePart") or child:IsA("MeshPart") or child:IsA("Part") then
+--							child.Transparency = 1
+--						end
+--					end
+--				end
+--			end
+--		end
+--	end
+	
+--	AvatarModel.Parent = MetaService.GameServices.Workspace
+--	task.wait(0.025)
+--	-- Устанавливаем точную позицию и ориентацию
+--	AvatarModel.PrimaryPart.CFrame = CurrentCFrame
+	
+--	-- Настраиваем параметры гуманоида
+--	AvatarModel.Humanoid.UseJumpPower = true
+--	AvatarModel.Humanoid.JumpPower = 50
+
+--	-- Устанавливаем новый персонаж
+--	self.Instance.Character = AvatarModel
+--	AvatarModel:SetAttribute('Avatar', true)
+
+--	-- Копируем скрипты
+--	for _, Asset in next, MetaService.GameServices.StarterPlayer.StarterCharacterScripts:GetChildren() do
+--		Asset:Clone().Parent = AvatarModel
+--	end
+	
+--	local Character = self:GetCharacter()
+--	if not Character or not Character.HumanoidRootPart then return end
+--	local decor = Character:FindFirstChild("Decor") 
+--	if decor ~= nil then
+--		local childen = decor:GetChildren()
+--		for i =1, #childen do
+--			if childen[i].Name == "weaponToDelete" then
+--				childen[i]:Destroy()
+--			end
+--		end
+--	end
+	
+--end
+
+
+
+---[ DROPS ]---
+function Template:CreateDrops(Type : string, Amount : number, Pos : CFrame, DropsAmount : number)
+	if not tonumber(DropsAmount) then DropsAmount = math.random(2, 4) end
+	
+	Amount = math.clamp(math.floor(Amount / DropsAmount), 1, math.huge)
+	
+	for i = 1, DropsAmount do
+		local DropID = MetaService.GameServices.HttpService:GenerateGUID(false)
+
+		local DropTable = {
+			['ID'] = DropID;
+			['Type'] = Type;
+			['Amount'] = Amount;
+			['CFrame'] = Pos;
+		}
+
+		self.Cache.Drops[DropID] = DropTable
+
+		self:Client('Drops', 'Create', DropTable)
+
+		task.delay(120, function()
+			if self.Instance and self.Cache.Drops[DropID] then
+				self.Cache.Drops[DropID] = nil
+				
+				self:Client('Drops', 'Destroy', DropTable)
+			end
+		end)
+	end
+	
+	--if self.Data.Rank_s1 < 3 then
+	--	if self.Data.TotalStats['Enemies Defeated'] == 1 then
+	--		MetaService.Server.Funnels:OnboardingFunnel(self, 1)	
+	--	elseif 	self.Data.TotalStats['Enemies Defeated'] == 50 then
+	--		MetaService.Server.Funnels:OnboardingFunnel(self, 5)	
+	--	end
+	--end
+end
+
+---[ CURRENCIES ]---
+function Template:AddCritical(Amount : number)
+	if type(Amount) ~= 'number' then return end
+	
+	self.Cache.Critical = math.clamp((self.Cache.Critical + Amount), 0, 30)
+	
+	self:Refresh()
+	self:Client('CriticalPopUp', 'Show', self.Cache.Critical)
+end
+
+function Template:GetAchievements(Type : string)
+	local Amount = 0
+	
+	for i, Info in next, MetaService.SharedModules.Achievements do
+		if not self.Data.Achievements[i] or Info.Reward[2] ~= Type then continue end
+		
+		--if tostring(Type) == "Storage" then
+		--	warn("Achivment " .. tostring(Type) .. " Add cf = " .. tostring(Info.Reward[1]) .. " / " .. tostring(Info.Name))
+		--end
+		Amount += Info.Reward[1]
+	end
+	--if tostring(Type) == "Storage" then
+	--	warn(Amount)
+	--end
+	
+	return Amount
+end
+
+function Template:WeaponPower(GetInfo)
+	local multi = self.Data.WeaponMultipliers[self.Data.Sword]
+	if multi ~= nil then
+		multi = self.Data.WeaponMultipliers[self.Data.Sword]
+	else
+		multi = 0
+	end
+	local Rarity = GetInfo.Rarity
+
+	local GetSwordMultiplier = MetaService.Utils:Unformat(GetInfo.Multiplier) 
+	local rarMulti = (GetSwordMultiplier-1)/10
+	if Rarity == "E" then 
+
+	elseif Rarity =="D" then
+		rarMulti = rarMulti * 1.1
+	elseif Rarity == "C" then 
+		rarMulti = rarMulti * 1.2
+	elseif Rarity == "B" then
+		rarMulti = rarMulti * 1.3
+	elseif Rarity == "A" then
+		rarMulti = rarMulti * 1.4
+	elseif Rarity == "S" then
+		rarMulti = rarMulti * 1.7
+	elseif Rarity == "SS" then
+		rarMulti = rarMulti * 2
+	end
+	local stars
+	if self.Data.WeaponStars[GetInfo.Name] ~= nil then
+		stars = self.Data.WeaponStars[GetInfo.Name] or 0
+	else
+		stars = 0
+	end
+	local starFactor = 1.0
+	if Rarity == "E" then
+		starFactor = 1.05
+	elseif Rarity == "D" then
+		starFactor = 1.1
+	elseif Rarity == "C" then
+		starFactor = 1.15
+	elseif Rarity == "B" then
+		starFactor = 1.2
+	elseif Rarity == "A" then
+		starFactor = 1.25
+	elseif Rarity == "S" then
+		starFactor = 1.3
+	elseif Rarity == "SS" then
+		starFactor = 1.4
+	end
+
+	local starMulti = math.pow(starFactor, stars)
+
+	local overal = (math.floor(((GetSwordMultiplier-1) + (rarMulti*multi*starMulti))*100)/100)
+
+	return overal
+end
+
+function Template:MultiplyDamage(value : number)
+	if self.Data.Potions['Damage Potion'] > 0 then
+		value *= 2
+	end
+	
+	--local CurrentSword = self.Data.Sword
+	--local FinalMultiply = 0
+	--if self.Data.WeaponMultipliers ~= nil then
+	--	if self.Data.WeaponMultipliers[self.Data.Sword] ~= nil then
+	--		if self.Data.WeaponMultipliers[self.Data.Sword] > 0 then
+	--			FinalMultiply = self.Data.WeaponMultipliers[self.Data.Sword]
+	--		end
+	--	end
+	--end
+	
+	--local SwordInfo = MetaService.SharedModules.Swords[self.Data.Sword]
+	--if SwordInfo then
+	--	value *= MetaService.Utils:Unformat(SwordInfo.Multiplier) + FinalMultiply
+	--end
+	
+	local SwordInfo = MetaService.SharedModules.Swords[self.Data.Sword]
+	if SwordInfo then
+		local weaponBonus = value * self:WeaponPower(SwordInfo)
+		value += weaponBonus
+	end
+	
+	--local MarkInfo = MetaService.SharedModules.Marks[self.Data.Mark]
+	--if MarkInfo and MarkInfo.Multiplier[2] == 'Damage' then
+	--	value *= MarkInfo.Multiplier[1]
+	--end
+	
+	--local CurseInfo = MetaService.SharedModules.Curses[self.Data.Curse]
+	--if CurseInfo and CurseInfo.Multiplier[2] == 'Damage' then
+	--	value *= CurseInfo.Multiplier[1]
+	--end
+	
+	--local RaceInfo = MetaService.SharedModules.Races[self.Data.Race]
+	--if RaceInfo and RaceInfo.Multiplier[2] == 'Damage' then
+	--	value *= RaceInfo.Multiplier[1]
+	--end
+	
+	--local FruitInfo = MetaService.SharedModules.Fruits[self.Data.Fruit]
+	--if FruitInfo and FruitInfo.Multiplier[2] == 'Damage' then
+	--	value *= FruitInfo.Multiplier[1]
+	--end
+	
+	--local AccessoryInfo = MetaService.SharedModules.Accessories[self.Data.Accessory]
+	--if AccessoryInfo and AccessoryInfo.Multiplier[2] == 'Damage' then
+	--	value *= AccessoryInfo.Multiplier[1]
+	--end
+	
+	
+	-------------------
+	
+	--local PassiveInfo = MetaService.SharedModules.Passives[self.Data.Passive]
+	--if PassiveInfo and PassiveInfo.Multiplier[2] == 'Damage' then
+	--	value *= PassiveInfo.Multiplier[1]
+	--end
+	
+	--local AmuletInfo = MetaService.SharedModules.Amulets[self.Data.Amulet]
+	--if AmuletInfo and AmuletInfo.Multiplier['Damage'] then
+	--	value *= (AmuletInfo.Multiplier['Damage'][1] + (self.Data.Inventory.Amulets[self.Data.Amulet].Level or 1))
+	--end
+	
+
+	--local TitleInfo = MetaService.SharedModules.Titles[self.Data.Title]
+	--if TitleInfo and TitleInfo.Multiplier[2] == 'Damage' then
+	--	value *= TitleInfo.Multiplier[1]
+	--end
+	
+	--local DivineInfo = MetaService.SharedModules.Divines[self.Data.Divine]
+	--if DivineInfo and DivineInfo.Multiplier[2] == 'Damage' then
+	--	value *= DivineInfo.Multiplier[1]
+	--end
+	
+	--local FamilyInfo = MetaService.SharedModules.Family[self.Data.Family]
+	--if FamilyInfo and FamilyInfo.Multiplier[2] == 'Damage' then
+	--	value *= FamilyInfo.Multiplier[1]
+	--end
+	
+	--local HakiInfo = MetaService.SharedModules.Haki[self.Data.Haki]
+	--if HakiInfo and HakiInfo.Multiplier[2] == 'Damage' then
+	--	value *= HakiInfo.Multiplier[1]
+	--end
+	
+	--local TalentInfo = MetaService.SharedModules.Talent[self.Data.Talent.Current]
+	--if TalentInfo and TalentInfo.Multiplier['Damage'] ~= nil then
+	--	value *= TalentInfo.Multiplier['Damage']
+	--end
+	
+	--local ClassInfo = MetaService.SharedModules.Class[self.Data.Class]
+	--if ClassInfo and ClassInfo.Multiplier[2] == 'Damage' then
+	--	value *= ClassInfo.Multiplier[1]
+	--end
+	
+	local Achievements = self:GetAchievements('Damage')
+	if Achievements >= 1 then
+		value *= Achievements
+	end
+	
+	
+	value *= math.clamp((1 + (1 * self.Data.Stats.List['Damage'])), 1, math.huge)
+	
+	return value
+end
+
+function Template:GetPetDamage()
+	local Amount = self.Data.Energy_s1
+
+	Amount = self:MultiplyDamage(Amount)
+	
+	if self.Data.Gamepasses['x2 Shadow Damage'] then
+		Amount = Amount*2
+	else
+		Amount = Amount
+	end
+	local CriticalActivated = false
+
+	return Amount, CriticalActivated
+end
+
+function Template:GetDamage()
+	local Amount = self.Data.Energy_s1
+	
+	Amount = self:MultiplyDamage(Amount)
+	
+	local CriticalActivated = false
+	
+	if self.Cache.Critical >= 5 then
+		self.Cache.Critical = 0
+		
+		CriticalActivated = true
+		
+		local CriticalInfo = MetaService.SharedModules.Criticals[self.Data.Critical]
+		if CriticalInfo then
+			Amount *= MetaService.Utils:Unformat(CriticalInfo.Multiplier)
+		end
+		
+		local SkillInfo = MetaService.SharedModules.Skills[self.Data.Skill.Current]
+		if SkillInfo then
+			local SkillMultiplier = SkillInfo.Multiplier
+			
+			--local TalentInfo = MetaService.SharedModules.Talent[self.Data.Talent.Current]
+			--if TalentInfo and TalentInfo.Multiplier['Skill Damage'] ~= nil then
+			--	SkillMultiplier *= TalentInfo.Multiplier['Skill Damage']
+			--end
+				 
+			Amount *= SkillMultiplier
+		end
+	end
+	
+	return Amount, CriticalActivated
+end
+
+function Template:GetBaseEnergyMultiplier()
+	local Amount = self:GetPetsMultiplier()
+
+	local AvatarInfo = MetaService.SharedModules.Avatars[self.Data.Avatar]
+	if AvatarInfo then
+		local AvatarBonus = MetaService.SharedModules.AvatarsPower[self.Data.Evolution]
+		Amount += MetaService.Utils:Unformat(AvatarBonus)
+	end
+	--warn(tostring(Amount) .. " Base multiplier")
+	return Amount
+end
+
+function Template:GetEnergyMultiplier()
+	local Amount = 1
+	
+	local RankInfo = MetaService.SharedModules.Ranks[self.Data.Rank_s1]
+	if RankInfo then
+		Amount += MetaService.Utils:Unformat(RankInfo.Multiplier)
+	end
+	
+	local friendMulti = 1
+
+	if self.Instance:GetAttribute("Friends") ~= nil then
+		friendMulti = 1 + (self.Instance:GetAttribute("Friends") * 0.1)
+	end
+	Amount *= friendMulti
+	--warn(tostring(Amount) .. " Rank friends")
+	return Amount
+end
+
+function Template:GetAuraMultiplier()
+	local Amount = 0
+
+	local AuraInfo = MetaService.SharedModules.Auras[self.Data.SoloAura_s1]
+	if AuraInfo then
+		Amount += MetaService.Utils:Unformat(AuraInfo.Multiplier)
+	end
+	if Amount < 1 then
+		Amount = 1
+	end
+	--warn(tostring(Amount) .. " Aura")
+	return Amount
+end
+
+function Template:MultiplyEnergy(value : number)
+
+	value *= self:GetBaseEnergyMultiplier()
+
+	value *= self:GetEnergyMultiplier()
+	value *= self:GetAuraMultiplier()
+	
+	---[ GAMEPASSES ]---
+	if self.Data.Gamepasses['2x Energy'] then
+		value *= 2
+	end
+
+	if self.Data.Gamepasses['VIP'] then
+		value *= 1.2
+	end
+
+	--if self.Data.Potions['Energy Potion'] > 0 then
+	--	value *= 2
+	--end
+	
+	--if self.Data.Potions['Super Energy'] > 0 then
+	--	value *= 3
+	--end
+	
+
+	if self.Data.Potions['Demonic Power'] > 0 then
+		value *= 4
+	end
+	
+	--local MarkInfo = MetaService.SharedModules.Marks[self.Data.Mark]
+	--if MarkInfo and MarkInfo.Multiplier[2] == 'Energy' then
+	--	value *= MarkInfo.Multiplier[1]
+	--end
+	
+	--local CurseInfo = MetaService.SharedModules.Curses[self.Data.Curse]
+	--if CurseInfo and CurseInfo.Multiplier[2] == 'Energy' then
+	--	value *= CurseInfo.Multiplier[1]
+	--end
+	
+	--local RaceInfo = MetaService.SharedModules.Races[self.Data.Race]
+	--if RaceInfo and RaceInfo.Multiplier[2] == 'Energy' then
+	--	value *= RaceInfo.Multiplier[1]
+	--end
+	
+	--local FruitInfo = MetaService.SharedModules.Fruits[self.Data.Fruit]
+	--if FruitInfo and FruitInfo.Multiplier[2] == 'Energy' then
+	--	value *= FruitInfo.Multiplier[1]
+	--end
+	
+	--local AccessoryInfo = MetaService.SharedModules.Accessories[self.Data.Accessory]
+	--if AccessoryInfo and AccessoryInfo.Multiplier[2] == 'Energy' then
+	--	value *= AccessoryInfo.Multiplier[1]
+	--end
+
+	---------------------
+	
+	--local PassiveInfo = MetaService.SharedModules.Passives[self.Data.Passive]
+	--if PassiveInfo and PassiveInfo.Multiplier[2] == 'Energy' then
+	--	value *= PassiveInfo.Multiplier[1]
+	--end
+	
+	--local AmuletInfo = MetaService.SharedModules.Amulets[self.Data.Amulet]
+	--if AmuletInfo and AmuletInfo.Multiplier['Energy'] then
+	--	value *= (AmuletInfo.Multiplier['Energy'][1] + (self.Data.Inventory.Amulets[self.Data.Amulet].Level or 1))
+	--end
+	
+	--local TitleInfo = MetaService.SharedModules.Titles[self.Data.Title]
+	--if TitleInfo and TitleInfo.Multiplier[2] == 'Energy' then
+	--	value *= TitleInfo.Multiplier[1]
+	--end
+	
+	--local DivineInfo = MetaService.SharedModules.Divines[self.Data.Divine]
+	--if DivineInfo and DivineInfo.Multiplier[2] == 'Energy' then
+	--	value *= DivineInfo.Multiplier[1]
+	--end
+	
+	--local FamilyInfo = MetaService.SharedModules.Family[self.Data.Family]
+	--if FamilyInfo and FamilyInfo.Multiplier[2] == 'Energy' then
+	--	value *= FamilyInfo.Multiplier[1]
+	--end
+	
+	--local HakiInfo = MetaService.SharedModules.Haki[self.Data.Haki]
+	--if HakiInfo and HakiInfo.Multiplier[2] == 'Energy' then
+	--	value *= HakiInfo.Multiplier[1]
+	--end
+	
+	--local TalentInfo = MetaService.SharedModules.Talent[self.Data.Talent.Current]
+	--if TalentInfo and TalentInfo.Multiplier['Energy'] ~= nil then
+	--	value *= TalentInfo.Multiplier['Energy']
+	--end
+	
+	--local ClassInfo = MetaService.SharedModules.Class[self.Data.Class]
+	--if ClassInfo and ClassInfo.Multiplier[2] == 'Energy' then
+	--	value *= ClassInfo.Multiplier[1]
+	--end
+	
+	local Achievements = self:GetAchievements('Energy')
+	local Achievements2 = self:GetAchievements('Demon Power')
+
+	local overalAchivments = Achievements + Achievements2
+	if overalAchivments >= 1 then
+		value *= overalAchivments
+	end
+	
+	value *= math.clamp((1 + (1 * self.Data.Stats.List['Energy_s1'])), 1, math.huge)
+
+	return value
+end
+
+function Template:AddEnergy(value : number)
+	value = tonumber(value)
+	
+	if not value or value < 1 then value = 1 end
+	--X 25 [DEBUG]___
+	--value *= 25
+	--X 25 [DEBUG]
+	value = self:MultiplyEnergy(value)
+
+	value = math.floor(value)
+	--warn(value)
+	
+	--// Missions Add
+	local MissionService = require(game.ReplicatedStorage.SharedModules.Missions)
+	MissionService.MISSION_EVENTS.EarnEnergy:Fire(self.Instance, value)
+	--//
+
+	self.Data.Energy_s1 += value
+	self.Data.TotalStats['Total Energy_s1'] += value
+	
+	--if self.Data.Rank_s1 < 16 then
+	--	MetaService.Server.Funnels:EnergyFunnel(self.Instance, self.Data)	
+	--	if self.Data.Rank_s1 < 3 then
+	--		if self.Data.TotalStats['Total Energy_s1'] >= 10000 then
+	--			MetaService.Server.Funnels:OnboardingFunnel(self, 7)
+	--		end
+	--	end
+	--end
+	
+	self:Refresh()
+	self:Client('EnergyPopUp', 'Add', value)
+end
+
+function Template:AddEnergyPet()
+	local value = 0.4 
+	--X 25 [DEBUG]_ __
+	--value *= 25
+	--X 25 [DEBUG]
+	value = self:MultiplyEnergy(value)
+
+	value = math.floor(value)
+
+	self.Data.Energy_s1 += value
+	self.Data.TotalStats['Total Energy_s1'] += value
+
+	self:Refresh()
+	self:Client('EnergyPopUp', 'Add', value)
+end
+
+function Template:AddGems(value : number)
+	value = tonumber(value)
+	if not value or value < 1 then value = 1 end
+	
+	if self.Data.Gamepasses['2x Gems'] then
+		value *= 2
+	end
+
+	if self.Data.Gamepasses['VIP'] then
+		value *= 1.2
+	end
+
+	--if self.Data.Potions['Gems Potion'] > 0 then
+	--	value *= 2
+	--end
+	
+	if self.Data.Potions['Tears Potion'] > 0 then
+		value *= 3
+	end
+	
+	if self.Data.Verified then
+		value *= 1.05
+	end
+	
+	if self.Data.Verified2 then
+		value *= 1.05
+	end
+	
+	--local MarkInfo = MetaService.SharedModules.Marks[self.Data.Mark]
+	--if MarkInfo and MarkInfo.Multiplier[2] == 'Gems' then
+	--	value *= MarkInfo.Multiplier[1]
+	--end
+	
+	--local RaceInfo = MetaService.SharedModules.Races[self.Data.Race]
+	--if RaceInfo and RaceInfo.Multiplier[2] == 'Gems' then
+	--	value *= RaceInfo.Multiplier[1]
+	--end
+	
+	--local FruitInfo = MetaService.SharedModules.Fruits[self.Data.Fruit]
+	--if FruitInfo and FruitInfo.Multiplier[2] == 'Gems' then
+	--	value *= FruitInfo.Multiplier[1]
+	--end
+	
+	--local AccessoryInfo = MetaService.SharedModules.Accessories[self.Data.Accessory]
+	--if AccessoryInfo and AccessoryInfo.Multiplier[2] == 'Gems' then
+	--	value *= AccessoryInfo.Multiplier[1]
+	--end
+	
+
+	-------------------
+	
+	--local TitleInfo = MetaService.SharedModules.Titles[self.Data.Title]
+	--if TitleInfo and TitleInfo.Multiplier[2] == 'Gems' then
+	--	value *= TitleInfo.Multiplier[1]
+	--end
+	
+	--local DivineInfo = MetaService.SharedModules.Divines[self.Data.Divine]
+	--if DivineInfo and DivineInfo.Multiplier[2] == 'Gems' then
+	--	value *= DivineInfo.Multiplier[1]
+	--end
+	
+	--local FamilyInfo = MetaService.SharedModules.Family[self.Data.Family]
+	--if FamilyInfo and FamilyInfo.Multiplier[2] == 'Gems' then
+	--	value *= FamilyInfo.Multiplier[1]
+	--end
+	
+	--local ClassInfo = MetaService.SharedModules.Class[self.Data.Class]
+	--if ClassInfo and ClassInfo.Multiplier[2] == 'Gems' then
+	--	value *= ClassInfo.Multiplier[1]
+	--end
+	
+	--local HakiInfo = MetaService.SharedModules.Haki[self.Data.Haki]
+	--if HakiInfo and HakiInfo.Multiplier[2] == 'Gems' then
+	--	value *= HakiInfo.Multiplier[1]
+	--end
+	
+	--local TalentInfo = MetaService.SharedModules.Talent[self.Data.Talent.Current]
+	--if TalentInfo and TalentInfo.Multiplier['Gems'] ~= nil then
+	--	value *= TalentInfo.Multiplier['Gems']
+	--end
+	
+	value = math.floor(value)
+	
+	self.Data.Gems_s1 += value
+	self.Data.TotalStats['Total Gems_s1'] += value
+	
+	--// Missions Add
+	local MissionService = require(game.ReplicatedStorage.SharedModules.Missions)
+	MissionService.MISSION_EVENTS.EarnMoney:Fire(self.Instance, value)
+	--//
+	
+	--Check player can evolve
+	--self.Data.Evolution = 0 --[DEBUG]
+	local evolve = self.Data.Evolution 
+	local gems = self.Data.TotalStats['Total Gems_s1']
+
+	local levelEvolve = self:GetEvolutionLevel(gems)
+	if evolve < levelEvolve then
+		if levelEvolve ~= 0 then
+
+			self:NotificationGlobal('NEW EVOLUTION -' .. tostring(levelEvolve)..  '- level', 5, Color3.new(1, 0.917647, 0))
+			self.Data.Evolution = levelEvolve
+			self:Client('Skills', 'SelfUse')
+			self:Client('Avatars', 'LoadEvolve', levelEvolve)	
+
+			if levelEvolve > evolve+1 then
+				coroutine.resume(coroutine.create(function()
+					local tableFix = {}
+					while levelEvolve > evolve+1 do
+						evolve += 1
+						table.insert(tableFix, evolve)
+					end
+					if #tableFix > 0 then
+						warn("Need Fix avatars = " .. tostring(#tableFix))
+						self:Client('Avatars', 'EvolveOverpowerFix', tableFix)	
+					end
+				end))	
+			end
+			local totalAvatars = 0
+			for key, value in pairs(self.Data.Inventory.Avatars) do
+				if value == true then
+					totalAvatars += 1
+				end
+			end
+			if totalAvatars < self.Data.Evolution  then
+				coroutine.resume(coroutine.create(function()
+					local tableFix = {}
+					local fixCount = 0
+					while self.Data.Evolution > fixCount do
+						fixCount += 1
+						table.insert(tableFix, fixCount)
+					end
+					if #tableFix > 0 then
+						--warn("Need overal Fix avatars = " .. tostring(#tableFix))
+						self:Client('Avatars', 'EvolveOverpowerFix', tableFix)	
+					end
+				end))	
+			end
+		end
+	end
+	
+	--if self.Data.Rank_s1 < 16 then
+	--	MetaService.Server.Funnels:GemsFunnel(self.Instance, self.Data)	
+	--	if self.Data.Rank_s1 < 3 then
+	--		if self.Data.TotalStats['Total Gems_s1'] >= 35000 then
+	--			MetaService.Server.Funnels:OnboardingFunnel(self, 6)
+	--		end
+	--	end
+	--end
+	
+	self:Refresh()
+	self:Client('GemsPopUp', 'Add', value)
+end
+
+---[ INVENTORY ]---
+function Template:AddItem(ItemName : string, Amount : number)
+	if type(ItemName) ~= 'string' or type(Amount) ~= 'number' then return end
+	
+	if not self.Data.Inventory.Items[ItemName] or (self.Data.Inventory.Items[ItemName] + Amount) > 25000 then return end
+	
+	self.Data.Inventory.Items[ItemName] += if self.Data.Gamepasses['2x Drops'] then (Amount * 2) else Amount
+end
+
+
+function Template:AddAmulet(AmuletName : string)
+	if type(AmuletName) ~= 'string' then return end
+	if self.Data.Inventory.Amulets[AmuletName] ~= nil then return end
+	
+	self.Data.Inventory.Amulets[AmuletName] = {}
+end
+
+function Template:AddPet(PetName : string, Type : string, IgnoreSpace : boolean)
+	if type(PetName) ~= 'string' then return end
+	
+	local PetID = MetaService.GameServices.HttpService:GenerateGUID(false)
+	
+	if not IgnoreSpace then
+		local InventorySpace = MetaService.Utils:GetTableAmount(self.Data.Pets_s1)
+		local MaxCapacity = self:GetInventoryCapacity()
+		if InventorySpace >= MaxCapacity then
+			self:Notification('Your inventory is full', 5, Color3.new(1, 0.129412, 0.129412))
+			return 
+		end
+	end	
+	
+	local PetTable = {
+		['Name'] = PetName;
+		['ID'] = PetID;
+		['Status'] = {};
+	}
+
+	if Type then
+		PetTable.Status[Type] = true
+	end
+
+	self.Data.Pets_s1[PetID] = PetTable
+
+end
+
+function Template:CalculatePetMultiplier(PetTable)
+	local Amount = 1
+	
+	if PetTable.Status.Shiny then
+		Amount += 2
+	end
+	
+	if PetTable.Status.Dark then
+		Amount += 5
+	end	
+	if PetTable.Status.Darker then
+		Amount += 11
+	end	
+	
+	if PetTable.Status.Shade then
+		Amount += 0.5
+	end
+	
+	return Amount
+end
+
+function Template:GetPetMultiplier(PetTable)
+	local Amount = 0
+	
+	local PetInfo = MetaService.SharedModules.Pets[PetTable.Name]
+	if not PetInfo then return Amount end
+	
+	local CountMultiplier = MetaService.Utils:Unformat(PetInfo.Multiplier)
+	
+	local Multipliers = self:CalculatePetMultiplier(PetTable)
+	CountMultiplier *= Multipliers
+	
+	Amount = CountMultiplier
+	
+	return Amount
+end
+
+function Template:GetPetsMultiplier()
+	local Amount = 1
+	
+	for PetID, PetTable in next, self.Data.Pets_s1 do
+		if not self.Data.PetsEquipped_s1[PetID] then continue end
+		
+		local CountMultiplier = self:GetPetMultiplier(PetTable)
+		
+		Amount += CountMultiplier
+	end
+	
+	return Amount
+end
+
+function Template:GetPetsEquipped()
+	local Amount = 0
+	
+	for PetID, PetTable in next, self.Data.PetsEquipped_s1 do
+		Amount += 1
+	end
+	
+	return Amount
+end
+
+function Template:GetStarsOpen()
+	local Amount = 1
+	
+	if self.Data.Gamepasses['More Open'] then
+		Amount += 2
+	end
+	
+	--local PassiveInfo = MetaService.SharedModules.Passives[self.Data.Passive]
+	--if PassiveInfo and PassiveInfo.Multiplier[2] == 'Open' then
+	--	Amount += PassiveInfo.Multiplier[1]
+	--end
+	
+	Amount += self:GetAchievements('Open')
+	
+	return Amount
+end
+
+function Template:GetPetsEquipCapacity()
+	local Amount = 3
+	
+	if self.Data.Gamepasses['More Equip'] then
+		Amount += 3
+	end
+	
+	--local PassiveInfo = MetaService.SharedModules.Passives[self.Data.Passive]
+	--if PassiveInfo and PassiveInfo.Multiplier[2] == 'Equip' then
+	--	Amount += PassiveInfo.Multiplier[1]
+	--end
+	
+	Amount += self:GetAchievements('Equip')
+	
+	return Amount
+end
+
+function Template:GetInventoryCapacity()
+	local Amount = 50
+	
+	if self.Data.Gamepasses['Small Storage'] then
+		Amount += 50
+	end
+	
+	if self.Data.Gamepasses['Big Storage'] then
+		Amount += 150
+	end
+	
+	if self.Data.Gamepasses['Big Vault'] then
+		Amount += 150
+	end
+	
+	Amount += self:GetAchievements('Storage')
+	self.Data.TotalStats['Max Pet Storage'] = Amount
+	
+	return Amount
+end
+
+---[ LOAD ]---
+function Template:LoadPets()
+	local PetFolder = MetaService.GameServices.Workspace.Server.Pets:FindFirstChild(tostring(self.Instance.UserId)) or Instance.new('Folder', MetaService.GameServices.Workspace.Server.Pets)
+	PetFolder.Name = tostring(self.Instance.UserId)
+
+	local ClientPetFolder = MetaService.GameServices.Workspace.Client.Pets:FindFirstChild(tostring(self.Instance.UserId)) or Instance.new('Folder', MetaService.GameServices.Workspace.Client.Pets)
+	ClientPetFolder.Name = tostring(self.Instance.UserId)
+
+	for PetID,_ in next, self.Data.PetsEquipped_s1 do
+		if not PetFolder:FindFirstChild(PetID) then
+			local PetTable = self.Data.Pets_s1[PetID]
+			if not PetTable or type(PetTable.Name) ~= 'string' then continue end
+			
+			local PetValue = Instance.new('StringValue')
+			PetValue.Name = PetID
+			PetValue.Value = PetTable.Name
+
+			if PetTable.Status.Shiny then
+				PetValue:SetAttribute('Shiny', true)
+			end
+			
+			if PetTable.Status.Dark then
+				PetValue:SetAttribute('Dark', true)
+			end
+			
+			if PetTable.Status.Darker then
+				PetValue:SetAttribute('Darker', true)
+			end
+			
+			if PetTable.Status.Shade then
+				PetValue:SetAttribute('Shade', true)
+			end
+			
+			PetValue.Parent = PetFolder
+		end
+	end
+
+	for _, PetValue in next, PetFolder:GetChildren() do
+		if not self.Data.PetsEquipped_s1[PetValue.Name] then
+			PetValue:Destroy()
+		end
+	end
+end
+
+--function Template:CheckFriendsCount(Player)
+--	--warn("Start friend check core")
+--	local Players = game:GetService("Players")
+--	local function getFriends(userId)
+--		local success, friendsPages = pcall(function()
+--			return Players:GetFriendsAsync(userId)
+--		end)
+
+--		if not success then
+--			warn("Failed to fetch friends for userId " .. userId .. ": " .. tostring(friendsPages))
+--			return {}
+--		end
+
+--		local friendIds = {}
+
+--		-- Loop through all pages to handle pagination (Roblox friends can span multiple pages).
+--		repeat
+--			local currentPage = friendsPages:GetCurrentPage()
+--			for _, friendInfo in ipairs(currentPage) do
+--				table.insert(friendIds, friendInfo.Id)
+--			end
+--			if not friendsPages.IsFinished then
+--				local advanceSuccess, advanceError = pcall(function()
+--					friendsPages:AdvanceToNextPageAsync()
+--				end)
+--				if not advanceSuccess then
+--					warn("Failed to advance to next friends page for userId " .. userId .. ": " .. tostring(advanceError))
+--					break
+--				end
+--			end
+--		until friendsPages.IsFinished
+
+--		return friendIds
+--	end
+
+--	coroutine.resume(coroutine.create(function()
+--		while true do
+--			local friendIds = getFriends(self.Instance.UserId)
+--			local count = 0
+
+--			for _, friendId in ipairs(friendIds) do
+--				local friendPlayer = Players:GetPlayerByUserId(friendId)
+--				if friendPlayer then
+--					count = count + 1
+--				end
+--			end
+--			if count >= 1 and count <= 3 then
+--				Player:SetAttribute('Friends', count)
+--			elseif count > 3 then
+--				Player:SetAttribute('Friends', 3)
+--			else	
+--				Player:SetAttribute('Friends', 0)
+--			end
+
+--			--warn(count)
+--			task.wait(60)
+--		end
+--	end))
+--end
+
+function Template:EquipBest()
+	self:UnequipAll()
+	--warn(self.Data.Inventory.Potions)
+	local MaxEquip = self:GetPetsEquipCapacity()
+	
+	for i = 1, MaxEquip do
+		local OldPet = nil
+		local OldMultiplier = 0
+
+		for PetID, PetTable in next, self.Data.Pets_s1 do
+			if self.Data.PetsEquipped_s1[PetID] then continue end
+			local GetMultiplier = MetaService.Utils:Unformat(self:GetPetMultiplier(PetTable))
+
+			if GetMultiplier >= OldMultiplier then
+				OldPet = PetID
+				OldMultiplier = GetMultiplier
+			end
+		end
+
+		if not OldPet then continue end
+		self.Data.PetsEquipped_s1[OldPet] = true
+	end
+
+	self:Refresh()
+	self:LoadPets()
+end
+
+function Template:UnequipAll()
+	for PetID, PetTable in next, self.Data.PetsEquipped_s1 do
+		self.Data.PetsEquipped_s1[PetID] = nil
+	end
+
+	self:Refresh()
+	self:LoadPets()
+end
+
+---[ COOLDOWN ]---
+function Template:AddCooldown(Name : string, Time : number)
+	if self.Cache.Cooldown[Name] then
+		self.Cache.Cooldown[Name].Time += Time
+	else
+		self.Cache.Cooldown[Name] = {
+			Start = tick(),
+			Time = Time,
+			LastCheck = tick(),
+		}
+	end
+end
+
+function Template:CheckCooldown(Name : string)
+	local InCooldown = false
+	
+	if self.Cache.Cooldown[Name] then
+		local Start = self.Cache.Cooldown[Name].Start
+		local Time = self.Cache.Cooldown[Name].Time
+		local LastCheck = self.Cache.Cooldown[Name].LastCheck
+		
+		if (tick() - Start) >= Time then
+			InCooldown = false
+			
+			self.Cache.Cooldown[Name] = nil
+		else
+			InCooldown = true
+			
+			self.Cache.Cooldown[Name].LastCheck = tick()
+		end
+	end
+	
+	return InCooldown
+end
+
+function Template:RemoveCooldown(Name : string)
+	if self.Cache.Cooldown[Name] then
+		self.Cache.Cooldown[Name] = nil
+	end
+end
+
+---[ END ]---
+function Template:EndSession()
+	
+end
+
+return Template
